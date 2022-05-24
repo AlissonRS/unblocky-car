@@ -15,10 +15,10 @@ contract UnblockyCar {
     }
 
     struct Step {
-        uint128 carId;
+        uint8 carId;
         Direction direction;
-        uint128 row;
-        uint128 col;
+        uint8 row;
+        uint8 col;
     }
 
     struct StateConnection {
@@ -33,16 +33,15 @@ contract UnblockyCar {
         mapping(uint128 => Step) previousMovements;
         bool isValid;
         bool isRoot;
-        uint128 steps;
+        uint8 steps;
         uint128 previousBoard;
     }
 
     struct StateVisit {
         bool hasVisited;
-        uint128 steps;
+        uint8 steps;
     }
 
-    uint128[] public stack;
     uint128[] public stateKeys;
     mapping(uint128 => State) public states;
     Step[] public bestPath;
@@ -50,8 +49,8 @@ contract UnblockyCar {
 
     function hashBoard(uint8[6][6] memory board) public pure returns (uint128) {
         uint128 base = 1000000000000000000000000000000000000;
-        for (uint128 i = 0; i < SIZE; i++) {
-            for (uint128 j = 0; j < SIZE; j++) {
+        for (uint8 i = 0; i < SIZE; i++) {
+            for (uint8 j = 0; j < SIZE; j++) {
                 uint128 r = i * SIZE + j;
                 uint128 exp = 36 - r - 1;
                 uint8 slot = board[i][j];
@@ -95,11 +94,12 @@ contract UnblockyCar {
         return newKey;
     }
 
-    function calculateSteps(uint128 initialKey) public {
-        stack.push(initialKey);
-        while (stack.length > 0) {
-            uint128 key = stack[stack.length - 1];
-            stack.pop();
+    function calculateSteps(uint128 initialKey, uint128[] memory stack) public {
+        stack[0] = initialKey;
+        uint8 stackSize = 1;
+        while (stackSize > 0) {
+            stackSize--;
+            uint128 key = stack[stackSize];
             State storage state = states[key];
             StateVisit storage visit = visited[key];
             if (visit.hasVisited && state.steps >= visit.steps) {
@@ -108,9 +108,9 @@ contract UnblockyCar {
                 visit.steps = state.steps;
                 visit.hasVisited = true;
             }
-            for (uint128 i = 0; i < state.nextStates.length; i++) {
+            for (uint8 i = 0; i < state.nextStates.length; i++) {
                 StateConnection storage connection = state.nextStates[i];
-                uint128 steps = state.steps + 1;
+                uint8 steps = state.steps + 1;
                 State storage nextState = states[connection.board];
                 if (
                     (!nextState.isRoot && nextState.steps == 0) ||
@@ -120,9 +120,10 @@ contract UnblockyCar {
                     nextState.previousBoard = key;
                 }
             }
-            for (uint128 i = 0; i < state.nextStates.length; i++) {
+            for (uint8 i = 0; i < state.nextStates.length; i++) {
                 StateConnection storage connection = state.nextStates[i];
-                stack.push(connection.board);
+                stack[stackSize] = connection.board;
+                stackSize++;
             }
         }
     }
@@ -134,15 +135,15 @@ contract UnblockyCar {
     {
         Step[] memory nextMovements = new Step[](36);
         uint128 pos = 0;
-        for (uint128 i = 0; i < SIZE; i++) {
+        for (uint8 i = 0; i < SIZE; i++) {
             bool isLeftEmpty = false;
             bool isTopEmpty = false;
-            uint128 previousHorSlot = 100;
-            uint128 previousVerSlot = 100;
-            for (uint128 j = 0; j < SIZE; j++) {
+            uint8 previousHorSlot = 100;
+            uint8 previousVerSlot = 100;
+            for (uint8 j = 0; j < SIZE; j++) {
                 // check horizontal
                 uint128 r = j + (i * SIZE);
-                uint128 slot = getPosition(key, r);
+                uint8 slot = getPosition(key, r);
                 if (slot != 0 && previousHorSlot == slot) {
                     if (isLeftEmpty) {
                         nextMovements[pos] = Step(
@@ -180,16 +181,17 @@ contract UnblockyCar {
         return nextMovements;
     }
 
-    function findNextMoves() public {
-        uint128 targetCar = 1;
-        while (stack.length > 0) {
-            uint128 currentBoard = stack[stack.length - 1];
-            stack.pop();
+    function findNextMoves(uint128[] memory stack) public {
+        uint8 targetCar = 1;
+        uint8 stackSize = 1;
+        while (stackSize > 0) {
+            stackSize--;
+            uint128 currentBoard = stack[stackSize];
             State storage currentState = states[currentBoard];
             Step[] memory nextMovements = findAvailableMovements(
                 currentState.board
             );
-            for (uint128 i = 0; i < nextMovements.length; i++) {
+            for (uint8 i = 0; i < nextMovements.length; i++) {
                 Step memory movement = nextMovements[i];
                 if (movement.carId == 0) break;
                 uint128 nextBoard = applyMove(currentState.board, movement);
@@ -210,18 +212,23 @@ contract UnblockyCar {
                     currentState.nextStates.push(
                         StateConnection(nextBoard, movement)
                     );
-                    if (!nextState.won) stack.push(nextBoard);
+                    if (!nextState.won) {
+                        stack[stackSize] = nextBoard;
+                        stackSize++;
+                    }
                 }
                 nextState.previousMovements[currentState.board] = movement;
             }
         }
     }
 
-    function findShortestPath(uint128 initialKey) public {
-        calculateSteps(initialKey);
+    function findShortestPath(uint128 initialKey, uint128[] memory stack)
+        public
+    {
+        calculateSteps(initialKey, stack);
         uint128 bestHash = 0;
         uint128 bestHashSteps = 0;
-        for (uint128 i = 0; i < stateKeys.length; i++) {
+        for (uint8 i = 0; i < stateKeys.length; i++) {
             uint128 key = stateKeys[i];
             State storage state = states[key];
             if (state.won) {
@@ -246,10 +253,6 @@ contract UnblockyCar {
         return bestPath;
     }
 
-    function getStack() public view returns (uint128[] memory) {
-        return stack;
-    }
-
     function getStateKeys() public view returns (uint128) {
         return uint128(stateKeys.length);
     }
@@ -268,11 +271,11 @@ contract UnblockyCar {
     function getPosition(uint128 key, uint128 index)
         public
         pure
-        returns (uint128)
+        returns (uint8)
     {
         uint128 p = 35 - index;
         uint128 pow = uint128(10**p);
-        return uint128(key / pow) % 10;
+        return uint8(uint128(key / pow) % 10);
     }
 
     function unblockCar(uint8[6][6] memory board)
@@ -280,13 +283,14 @@ contract UnblockyCar {
         returns (Step[] memory)
     {
         uint128 initialBoard = hashBoard(board);
-        stack.push(initialBoard);
+        uint128[] memory stack = new uint128[](4000);
+        stack[0] = initialBoard;
         stateKeys.push(initialBoard);
         State storage initialState = states[initialBoard];
         initialState.board = initialBoard;
         initialState.isRoot = true;
-        findNextMoves();
-        findShortestPath(initialBoard);
+        findNextMoves(stack);
+        findShortestPath(initialBoard, stack);
         return bestPath;
     }
 }
