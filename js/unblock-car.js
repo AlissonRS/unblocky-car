@@ -16,19 +16,6 @@ function setCharAt(str, index, chr) {
     return str.substring(0, index) + chr + str.substring(index + 1);
 }
 
-const buildBoard = (hash) => {
-    const board = [];
-    for (let i = 0; i < SIZE; i++) {
-        const row = [];
-        for (let j = 0; j < SIZE; j++) {
-            const slot = hash[i * SIZE + j];
-            row.push(slot);
-        }
-        board.push(row);
-    }
-    return board;
-}
-
 function boardToStr(board) {
     let str = '';
     for (let i = 0; i < board.length; i++) {
@@ -51,18 +38,18 @@ function getIncremets(direction) {
     return 0;
 }
 
-function applyMove(hash, move) {
+function applyMove(board, move) {
     const inc = getIncremets(move.direction);
     const r = move.row * SIZE + move.col;
-    let carId = hash[r];
-    let newHash = setCharAt(hash, r + inc, carId);
+    let carId = board[r];
+    let newHash = setCharAt(board, r + inc, carId);
     const twoSlotsAway = r - inc * 2;
     if (twoSlotsAway < 0 || newHash[twoSlotsAway] !== carId) newHash = setCharAt(newHash, r - inc, '0');
     else newHash = setCharAt(newHash, r - inc * 2, '0');
     return newHash;
 }
 
-function findAvailableMovements(hash) {
+function findAvailableMovements(board) {
     const moves = [];
     for (let i = 0; i < SIZE; i++) {
         let isLeftEmpty = false;
@@ -72,19 +59,19 @@ function findAvailableMovements(hash) {
         for (let j = 0; j < SIZE; j++) {
             // check horizontal
             const r = j + (i * SIZE);
-            let slot = hash[r];
+            let slot = board[r];
             if (slot !== '0' && previousHorSlot === slot) {
                 if (isLeftEmpty) moves.push(new Step(slot, MovementDirection.Left, i, j - 1));
-                if (j < SIZE - 1 && hash[r + 1] === '0') moves.push(new Step(slot, MovementDirection.Right, i, j));
+                if (j < SIZE - 1 && board[r + 1] === '0') moves.push(new Step(slot, MovementDirection.Right, i, j));
             }
             isLeftEmpty = previousHorSlot === '0';
             previousHorSlot = slot;
             // check vertical
             const c = i + (j * SIZE);
-            slot = hash[c];
+            slot = board[c];
             if (slot !== '0' && previousVerSlot === slot) {
                 if (isTopEmpty) moves.push(new Step(slot, MovementDirection.Up, j - 1, i));
-                if (j < SIZE - 1 && hash[c + SIZE] === '0') moves.push(new Step(slot, MovementDirection.Down, j, i));
+                if (j < SIZE - 1 && board[c + SIZE] === '0') moves.push(new Step(slot, MovementDirection.Down, j, i));
             }
             isTopEmpty = previousVerSlot === '0';
             previousVerSlot = slot;
@@ -93,99 +80,128 @@ function findAvailableMovements(hash) {
     return moves;
 }
 
-function findNextMoves(initialState, states) {
-    const stack = [initialState];
-    while (stack.length > 0) {
-        const currentState = stack.pop();
-        const nextMovements = findAvailableMovements(currentState.hash);
+function findNextMoves(states, stack, stateIndexes) {
+    let stackSize = 1;
+    let stateCount = 1;
+    while (stackSize > 0) {
+        stackSize--;
+        const currentBoard = stack[stackSize];
+        let idx = stateIndexes[currentBoard];
+        const currentState = states[idx];
+        const nextMovements = findAvailableMovements(currentState.board);
         for (let i = 0; i < nextMovements.length; i++) {
             const movement = nextMovements[i];
-            const nextHash = applyMove(currentState.hash, movement);
-            const won = nextHash[16] === '1' && nextHash[17] === '1';
-            const nextState = {
-                hash: nextHash,
-                nextHashes: [],
-                won,
-                previousMovements: {}
-            };
-            if (nextHash in states) {
-                currentState.nextHashes.push({ hash: nextHash, movement });
-            } else {
-                states[nextHash] = nextState;
-                currentState.nextHashes.push({ hash: nextHash, movement });
-                currentState.invalid = false;
-                if (!nextState.won) stack.push(nextState);
+            const nextBoard = applyMove(currentState.board, movement);
+            const won = nextBoard[16] === '1' && nextBoard[17] === '1';
+            idx = stateIndexes[nextBoard];
+            if (!idx) {
+                states.push({
+                    board: nextBoard,
+                    nextStates: [],
+                    won,
+                    previousMovements: {}
+                });
+                stateCount++;
+                idx = stateCount;
+                stateIndexes[nextBoard] = idx;
             }
-            states[nextHash].previousMovements[currentState.hash] = movement;
+            const nextState = states[idx];
+            if (nextState.isValid) {
+                currentState.nextStates.push({ board: nextBoard, movement });
+            } else {
+                currentState.nextStates.push({ board: nextBoard, movement });
+                currentState.isValid = true;
+                if (!nextState.won) {
+                    stack[stackSize] = nextBoard;
+                    stackSize++;
+                }
+            }
+            nextState.previousMovements[currentState.board] = movement;
         }
     }
 }
 
-function calculateSteps(hash, states, visited) {
-    const stack = [hash];
-    while (stack.length > 0) {
-        const hash = stack.pop();
-        const state = states[hash];
-        if (hash in visited && state.steps >= visited[hash]) {
+function calculateSteps(board, states, visited, stack, stateIndexes) {
+    stack[0] = board;
+    let stackSize = 1;
+    while (stackSize > 0) {
+        stackSize--;
+        const board = stack[stackSize];
+        let idx = stateIndexes[board];
+        const state = states[idx];
+        if (board in visited && state.steps >= visited[board]) {
             continue;
         } else {
-            visited[hash] = state.steps;
+            visited[board] = state.steps;
         }
-        for (let i = 0; i < state.nextHashes.length; i++) {
-            const nextHash = state.nextHashes[i];
+        for (let i = 0; i < state.nextStates.length; i++) {
+            const nextBoard = state.nextStates[i];
             const steps = state.steps + 1;
-            const nextState = states[nextHash.hash];
+            idx = stateIndexes[nextBoard.board];
+            const nextState = states[idx];
             if ((!nextState.steps || nextState.steps > steps) && nextState.steps !== 0) {
                 nextState.steps = steps;
-                nextState.previousHash = hash;
+                nextState.previousBoard = board;
             }
         }
-        for (let i = 0; i < state.nextHashes.length; i++) {
-            const nextHash = state.nextHashes[i];
-            stack.push(nextHash.hash);
+        for (let i = 0; i < state.nextStates.length; i++) {
+            const nextBoard = state.nextStates[i];
+            stack[stackSize] = nextBoard.board;
+            stackSize++;
         }
     }
 }
 
-function findShortestPath(initialHash, states) {
-    calculateSteps(initialHash, states, {});
+function findShortestPath(initialBoard, states, stack, stateIndexes) {
+    calculateSteps(initialBoard, states, {}, stack, stateIndexes);
     let bestHash = '';
     let bestHashSteps = 0;
-    for (const hash of Object.keys(states)) {
-        const step = states[hash];
-        if (step.won) {
-            if (step.steps < bestHashSteps || bestHashSteps === 0) {
-                bestHash = step.hash;
-                bestHashSteps = step.steps;
+    for (let i = 1; i < states.length; i++) {
+        const state = states[i];
+        if (!state) break;
+        if (state.won) {
+            if (state.steps < bestHashSteps || bestHashSteps === 0) {
+                bestHash = state.board;
+                bestHashSteps = state.steps;
             }
         }
     }
     const bestPath = [];
-    if (bestHash in states) {
-        let currentState = states[bestHash];
+    if (bestHash in stateIndexes) {
+        let idx = stateIndexes[bestHash];
+        let currentState = states[idx];
         while (currentState) {
-            if (currentState.previousHash) {
-                bestPath.push(currentState.previousMovements[currentState.previousHash]);
+            if (currentState.previousBoard) {
+                bestPath.push(currentState.previousMovements[currentState.previousBoard]);
             }
-            currentState = states[currentState.previousHash];
+            idx = stateIndexes[currentState.previousBoard];
+            currentState = states[idx];
         }
     }
     return bestPath;
 }
 
 function unblockCar(board) {
-    const states = {};
-    const initialHash = boardToStr(board);
+    const stateIndexes = {};
+    const states = [];
+    const initialBoard = boardToStr(board);
     const initialState = {
-        hash: initialHash,
-        nextHashes: [],
+        board: initialBoard,
+        nextStates: [],
         won: false,
         steps: 0,
         previousMovements: {},
     }
-    states[initialHash] = initialState;
-    findNextMoves(initialState, states);
-    return findShortestPath(initialHash, states);
+    stateIndexes[initialBoard] = 1;
+    states.push(null);
+    states.push(initialState);
+    const stack = [];
+    for (let i = 0; i < 12000; i++) {
+        stack.push(0);
+    }
+    stack[0] = initialBoard;
+    findNextMoves(states, stack, stateIndexes);
+    return findShortestPath(initialBoard, states, stack, stateIndexes);
 }
 
 function log(steps) {
@@ -196,10 +212,6 @@ function log(steps) {
         console.log(`[${i}] Car ${step.carId} ${step.direction}`);
     }
     console.log('-----------------------------');
-}
-
-function boardToInt(board) {
-    let hash = 10000000000000000;
 }
 
 console.log("Solving Case 1 with 2 moves");

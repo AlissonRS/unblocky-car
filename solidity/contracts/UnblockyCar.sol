@@ -21,31 +21,32 @@ contract UnblockyCar {
         uint8 col;
     }
 
+    struct Movement {
+        uint8 carId;
+        Direction direction;
+    }
+
     struct StateConnection {
         uint128 board;
-        Step movement;
+        Movement movement;
     }
 
     struct State {
         uint128 board;
-        StateConnection[] nextStates;
         bool won;
-        mapping(uint128 => Step) previousMovements;
         bool isValid;
         bool isRoot;
         uint8 steps;
         uint128 previousBoard;
     }
 
-    struct StateVisit {
-        bool hasVisited;
-        uint8 steps;
-    }
-
-    uint128[] public stateKeys;
-    mapping(uint128 => State) public states;
-    Step[] public bestPath;
-    mapping(uint128 => StateVisit) public visited;
+    uint128[] stateKeys;
+    mapping(uint128 => uint16) stateIndexes;
+    mapping(uint128 => Movement[]) bestPathByInitialBoard;
+    mapping(uint128 => bool) hasVisited;
+    mapping(uint128 => uint8) minSteps;
+    mapping(uint128 => StateConnection[]) nextStates;
+    mapping(uint128 => mapping(uint128 => Movement)) previousMovements;
 
     function hashBoard(uint8[6][6] memory board) public pure returns (uint128) {
         uint128 base = 1000000000000000000000000000000000000;
@@ -94,24 +95,30 @@ contract UnblockyCar {
         return newKey;
     }
 
-    function calculateSteps(uint128 initialKey, uint128[] memory stack) public {
+    function calculateSteps(
+        State[] memory states,
+        uint128 initialKey,
+        uint128[] memory stack
+    ) public {
         stack[0] = initialKey;
         uint8 stackSize = 1;
         while (stackSize > 0) {
             stackSize--;
             uint128 key = stack[stackSize];
-            State storage state = states[key];
-            StateVisit storage visit = visited[key];
-            if (visit.hasVisited && state.steps >= visit.steps) {
+            uint16 idx = stateIndexes[key];
+            State memory state = states[idx];
+            if (hasVisited[key] && state.steps >= minSteps[key]) {
                 continue;
             } else {
-                visit.steps = state.steps;
-                visit.hasVisited = true;
+                minSteps[key] = state.steps;
+                hasVisited[key] = true;
             }
-            for (uint8 i = 0; i < state.nextStates.length; i++) {
-                StateConnection storage connection = state.nextStates[i];
+            StateConnection[] storage connections = nextStates[state.board];
+            for (uint8 i = 0; i < connections.length; i++) {
+                StateConnection storage connection = connections[i];
                 uint8 steps = state.steps + 1;
-                State storage nextState = states[connection.board];
+                idx = stateIndexes[connection.board];
+                State memory nextState = states[idx];
                 if (
                     (!nextState.isRoot && nextState.steps == 0) ||
                     nextState.steps > steps
@@ -120,8 +127,8 @@ contract UnblockyCar {
                     nextState.previousBoard = key;
                 }
             }
-            for (uint8 i = 0; i < state.nextStates.length; i++) {
-                StateConnection storage connection = state.nextStates[i];
+            for (uint8 i = 0; i < connections.length; i++) {
+                StateConnection storage connection = connections[i];
                 stack[stackSize] = connection.board;
                 stackSize++;
             }
@@ -181,13 +188,17 @@ contract UnblockyCar {
         return nextMovements;
     }
 
-    function findNextMoves(uint128[] memory stack) public {
+    function findNextMoves(State[] memory states, uint128[] memory stack)
+        public
+    {
         uint8 targetCar = 1;
-        uint8 stackSize = 1;
+        uint16 stackSize = 1;
+        uint16 stateCount = 1;
         while (stackSize > 0) {
             stackSize--;
             uint128 currentBoard = stack[stackSize];
-            State storage currentState = states[currentBoard];
+            uint16 idx = stateIndexes[currentBoard];
+            State memory currentState = states[idx];
             Step[] memory nextMovements = findAvailableMovements(
                 currentState.board
             );
@@ -197,40 +208,57 @@ contract UnblockyCar {
                 uint128 nextBoard = applyMove(currentState.board, movement);
                 uint128 finalSlot1 = getPosition(nextBoard, 16);
                 uint128 finalSlot2 = getPosition(nextBoard, 17);
-                State storage nextState = states[nextBoard];
-                nextState.board = nextBoard;
-                nextState.won =
-                    finalSlot1 == targetCar &&
-                    finalSlot2 == targetCar;
+                idx = stateIndexes[nextBoard];
+                if (idx == 0) {
+                    stateCount++;
+                    idx = stateCount;
+                    stateIndexes[nextBoard] = idx;
+                    states[idx].board = nextBoard;
+                    states[idx].won =
+                        finalSlot1 == targetCar &&
+                        finalSlot2 == targetCar;
+                }
+                State memory nextState = states[idx];
                 if (nextState.isValid) {
-                    currentState.nextStates.push(
-                        StateConnection(nextBoard, movement)
+                    nextStates[currentState.board].push(
+                        StateConnection(
+                            nextBoard,
+                            Movement(movement.carId, movement.direction)
+                        )
                     );
                 } else {
                     nextState.isValid = true;
                     stateKeys.push(nextBoard);
-                    currentState.nextStates.push(
-                        StateConnection(nextBoard, movement)
+                    nextStates[currentState.board].push(
+                        StateConnection(
+                            nextBoard,
+                            Movement(movement.carId, movement.direction)
+                        )
                     );
                     if (!nextState.won) {
                         stack[stackSize] = nextBoard;
                         stackSize++;
                     }
                 }
-                nextState.previousMovements[currentState.board] = movement;
+                previousMovements[nextState.board][
+                    currentState.board
+                ] = Movement(movement.carId, movement.direction);
             }
         }
     }
 
-    function findShortestPath(uint128 initialKey, uint128[] memory stack)
-        public
-    {
-        calculateSteps(initialKey, stack);
+    function findShortestPath(
+        State[] memory states,
+        uint128 initialKey,
+        uint128[] memory stack
+    ) public {
+        calculateSteps(states, initialKey, stack);
         uint128 bestHash = 0;
         uint128 bestHashSteps = 0;
         for (uint8 i = 0; i < stateKeys.length; i++) {
             uint128 key = stateKeys[i];
-            State storage state = states[key];
+            uint16 idx = stateIndexes[key];
+            State memory state = states[idx];
             if (state.won) {
                 if (state.steps < bestHashSteps || bestHashSteps == 0) {
                     bestHash = state.board;
@@ -238,19 +266,31 @@ contract UnblockyCar {
                 }
             }
         }
+        Movement[] memory bestPath = new Movement[](bestHashSteps);
         if (bestHash > 0) {
-            State storage currentState = states[bestHash];
+            uint16 idx = stateIndexes[bestHash];
+            State memory currentState = states[idx];
             while (currentState.previousBoard > 0) {
-                bestPath.push(
-                    currentState.previousMovements[currentState.previousBoard]
-                );
-                currentState = states[currentState.previousBoard];
+                bestHashSteps--;
+                bestPath[bestHashSteps] = previousMovements[currentState.board][
+                    currentState.previousBoard
+                ];
+                idx = stateIndexes[currentState.previousBoard];
+                currentState = states[idx];
             }
+        }
+        for (uint256 i = 0; i < bestPath.length; i++) {
+            bestPathByInitialBoard[initialKey].push(bestPath[i]);
         }
     }
 
-    function getBestPath() public view returns (Step[] memory) {
-        return bestPath;
+    function getBestPath(uint8[6][6] memory board)
+        public
+        view
+        returns (Movement[] memory)
+    {
+        uint128 initialBoard = hashBoard(board);
+        return bestPathByInitialBoard[initialBoard];
     }
 
     function getStateKeys() public view returns (uint128) {
@@ -278,19 +318,25 @@ contract UnblockyCar {
         return uint8(uint128(key / pow) % 10);
     }
 
-    function unblockCar(uint8[6][6] memory board)
-        public
-        returns (Step[] memory)
-    {
+    function unblockCar(uint8[6][6] memory board) public {
         uint128 initialBoard = hashBoard(board);
         uint128[] memory stack = new uint128[](4000);
         stack[0] = initialBoard;
         stateKeys.push(initialBoard);
-        State storage initialState = states[initialBoard];
+        stateIndexes[initialBoard] = 1;
+        State[] memory states = new State[](80);
+        State memory initialState = states[1];
         initialState.board = initialBoard;
         initialState.isRoot = true;
-        findNextMoves(stack);
-        findShortestPath(initialBoard, stack);
-        return bestPath;
+        findNextMoves(states, stack);
+        findShortestPath(states, initialBoard, stack);
+        for (uint256 i = 0; i < stateKeys.length; i++) {
+            uint128 key = stateKeys[i];
+            hasVisited[key] = false;
+            minSteps[key] = 0;
+            stateIndexes[key] = 0;
+            delete nextStates[key];
+        }
+        delete stateKeys;
     }
 }

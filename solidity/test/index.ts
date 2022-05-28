@@ -11,7 +11,7 @@ describe("UnblockyCar", function () {
     let moves = await unblockyCar.findAvailableMovements(
       BigNumber.from("1004222004000114003506603500073888070")
     );
-    moves = moves.filter((m) => m.carId.gt(0));
+    moves = moves.filter((m) => m.carId > 0);
     expect(moves).to.lengthOf(6);
 
     expect(moves[0].carId).to.equal(6);
@@ -47,7 +47,7 @@ describe("UnblockyCar", function () {
     const transaction = await unblockyCar.unblockCar(board as any);
     const receipt = await transaction.wait();
     console.log("Gas used: ", receipt.gasUsed);
-    const bestPath = await unblockyCar.getBestPath();
+    const bestPath = await unblockyCar.getBestPath(board as any);
     expect(bestPath).to.lengthOf(0);
   });
 
@@ -68,7 +68,7 @@ describe("UnblockyCar", function () {
     const transaction = await unblockyCar.unblockCar(board as any);
     const receipt = await transaction.wait();
     console.log("Gas used: ", receipt.gasUsed);
-    const bestPath = await unblockyCar.getBestPath();
+    const bestPath = await unblockyCar.getBestPath(board as any);
     expect(bestPath).to.lengthOf(6);
   });
 
@@ -89,7 +89,7 @@ describe("UnblockyCar", function () {
   //   const transaction = await unblockyCar.unblockCar(board as any);
   //   const receipt = await transaction.wait();
   //   console.log("Gas used: ", receipt.gasUsed);
-  //   const bestPath = await unblockyCar.getBestPath();
+  //   const bestPath = await unblockyCar.getBestPath(board as any);
   //   expect(bestPath).to.lengthOf(25);
   // });
 
